@@ -114,33 +114,51 @@ BitView.prototype.setBits = function (offset, value, bits) {
 	}
 };
 
+var signed = true;
+var unsigned = false;
+function defaultArg(val, def) {
+	return val === undefined ? def : val;
+}
+
 BitView.prototype.getInt8 = function (offset) {
-	return this.getBits(offset, 8, true);
+	return this.getBits(offset, 8, signed);
 };
 BitView.prototype.getUint8 = function (offset) {
-	return this.getBits(offset, 8, false);
+	return this.getBits(offset, 8, unsigned);
 };
-BitView.prototype.getInt16 = function (offset) {
-	return this.getBits(offset, 16, true);
+BitView.prototype.getInt16 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setInt16(0, this.getBits(offset, 16, signed), true);
+	return BitView._scratch.getInt16(0, littleEndianDef);
 };
-BitView.prototype.getUint16 = function (offset) {
-	return this.getBits(offset, 16, false);
+BitView.prototype.getUint16 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setUint16(0, this.getBits(offset, 16, unsigned), true);
+	return BitView._scratch.getUint16(0, littleEndianDef);
 };
-BitView.prototype.getInt32 = function (offset) {
-	return this.getBits(offset, 32, true);
+BitView.prototype.getInt32 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setInt32(0, this.getBits(offset, 32, signed), true);
+	return BitView._scratch.getInt32(0, littleEndianDef);
 };
-BitView.prototype.getUint32 = function (offset) {
-	return this.getBits(offset, 32, false);
+BitView.prototype.getUint32 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setUint32(0, this.getBits(offset, 32, unsigned), true);
+	return BitView._scratch.getUint32(0, littleEndianDef);
 };
-BitView.prototype.getFloat32 = function (offset) {
-	BitView._scratch.setUint32(0, this.getUint32(offset));
-	return BitView._scratch.getFloat32(0);
+BitView.prototype.getFloat32 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setUint32(0, this.getUint32(offset, true), true);
+	return BitView._scratch.getFloat32(0, littleEndianDef);
 };
-BitView.prototype.getFloat64 = function (offset) {
-	BitView._scratch.setUint32(0, this.getUint32(offset));
+BitView.prototype.getFloat64 = function (offset, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	var uint1 = this.getUint32(offset, true);
+	var uint2 = this.getUint32(offset+32, true);
+	BitView._scratch.setUint32(0, uint1, true);
 	// DataView offset is in bytes.
-	BitView._scratch.setUint32(4, this.getUint32(offset+32));
-	return BitView._scratch.getFloat64(0);
+	BitView._scratch.setUint32(4, uint2, true);
+	return BitView._scratch.getFloat64(0, littleEndianDef);
 };
 
 BitView.prototype.setInt8  =
@@ -148,21 +166,27 @@ BitView.prototype.setUint8 = function (offset, value) {
 	this.setBits(offset, value, 8);
 };
 BitView.prototype.setInt16  =
-BitView.prototype.setUint16 = function (offset, value) {
-	this.setBits(offset, value, 16);
+BitView.prototype.setUint16 = function (offset, value, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setInt16(0, value, littleEndianDef);
+	this.setBits(offset, BitView._scratch.getInt16(0, true), 16);
 };
 BitView.prototype.setInt32  =
-BitView.prototype.setUint32 = function (offset, value) {
-	this.setBits(offset, value, 32);
+BitView.prototype.setUint32 = function (offset, value, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setInt32(0, value, littleEndianDef);
+	this.setBits(offset, BitView._scratch.getInt32(0, true), 32);
 };
-BitView.prototype.setFloat32 = function (offset, value) {
-	BitView._scratch.setFloat32(0, value);
-	this.setBits(offset, BitView._scratch.getUint32(0), 32);
+BitView.prototype.setFloat32 = function (offset, value, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setFloat32(0, value, littleEndianDef);
+	this.setBits(offset, BitView._scratch.getUint32(0, true), 32);
 };
-BitView.prototype.setFloat64 = function (offset, value) {
-	BitView._scratch.setFloat64(0, value);
-	this.setBits(offset, BitView._scratch.getUint32(0), 32);
-	this.setBits(offset+32, BitView._scratch.getUint32(4), 32);
+BitView.prototype.setFloat64 = function (offset, value, littleEndian) {
+	var littleEndianDef = defaultArg(littleEndian, true);
+	BitView._scratch.setFloat64(0, value, littleEndianDef);
+	this.setBits(offset, BitView._scratch.getUint32(0, true), 32);
+	this.setBits(offset+32, BitView._scratch.getUint32(4, true), 32);
 };
 
 /**********************************************************
