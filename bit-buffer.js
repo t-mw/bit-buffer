@@ -38,10 +38,6 @@ Object.defineProperty(BitView.prototype, 'byteLength', {
 	configurable: false
 });
 
-BitView.prototype._getBit = function (offset) {
-	return this._view[offset >> 3] >> (offset & 7) & 0x1;
-};
-
 BitView.prototype._setBit = function (offset, on) {
 	if (on) {
 		this._view[offset >> 3] |= 1 << (offset & 7);
@@ -59,16 +55,18 @@ BitView.prototype.getBits = function (offset, bits, signed) {
 
 	var value = 0;
 	for (var i = 0; i < bits;) {
-		var read;
+		var remaining = bits - i;
+		var bitOffset = offset & 7;
+		var currentByte = this._view[offset >> 3];
 
-		// Read an entire byte if we can.
-		if ((bits - i) >= 8 && ((offset & 7) === 0)) {
-			value |= (this._view[offset >> 3] << i);
-			read = 8;
-		} else {
-			value |= (this._getBit(offset) << i);
-			read = 1;
-		}
+		// the max number of bits we can read from the current byte
+		var read = Math.min(remaining, 8 - bitOffset);
+
+		// create a mask with the correct bit width
+		var mask = (1 << read) - 1;
+		// shift the bits we want to the start of the byte and mask of the rest
+		var readBits = (currentByte >> bitOffset) & mask;
+		value |= readBits << i;
 
 		offset += read;
 		i += read;
@@ -120,6 +118,9 @@ function defaultArg(val, def) {
 	return val === undefined ? def : val;
 }
 
+BitView.prototype.getBoolean = function (offset) {
+	return this.getBits(offset, 1, false) !== 0;
+};
 BitView.prototype.getInt8 = function (offset) {
 	return this.getBits(offset, 8, signed);
 };
@@ -161,6 +162,9 @@ BitView.prototype.getFloat64 = function (offset, littleEndian) {
 	return BitView._scratch.getFloat64(0, littleEndianDef);
 };
 
+BitView.prototype.setBoolean = function (offset, value) {
+	this.setBits(offset, value ? 1 : 0, 1);
+};
 BitView.prototype.setInt8  =
 BitView.prototype.setUint8 = function (offset, value) {
 	this.setBits(offset, value, 8);
@@ -214,6 +218,14 @@ var writer = function (name, size) {
 };
 
 function readASCIIString(stream, bytes) {
+	return readString(stream, bytes, false);
+}
+
+function readUTF8String(stream, bytes) {
+	return readString(stream, bytes, true);
+}
+
+function readString(stream, bytes, utf8) {
 	var i = 0;
 	var chars = [];
 	var append = true;
@@ -232,7 +244,6 @@ function readASCIIString(stream, bytes) {
 				break;
 			}
 		}
-
 		if (append) {
 			chars.push(c);
 		}
@@ -240,10 +251,16 @@ function readASCIIString(stream, bytes) {
 		i++;
 	}
 
-	// Convert char code array back to string.
-	return chars.map(function (x) {
-		return String.fromCharCode(x);
-	}).join('');
+	var string = String.fromCharCode.apply(null, chars);
+	if (utf8) {
+		try {
+			return decodeURIComponent(escape(string)); // https://stackoverflow.com/a/17192845
+		} catch (e) {
+			return string;
+		}
+	} else {
+		return string;
+	}
 }
 
 function writeASCIIString(stream, string, bytes) {
@@ -252,6 +269,43 @@ function writeASCIIString(stream, string, bytes) {
 	for (var i = 0; i < length; i++) {
 		stream.writeUint8(i < string.length ? string.charCodeAt(i) : 0x00);
 	}
+}
+
+function writeUTF8String(stream, string, bytes) {
+	var byteArray = stringToByteArray(string);
+
+	var length = bytes || byteArray.length + 1;  // + 1 for NULL
+	for (var i = 0; i < length; i++) {
+		stream.writeUint8(i < byteArray.length ? byteArray[i] : 0x00);
+	}
+}
+
+function stringToByteArray(str) { // https://gist.github.com/volodymyr-mykhailyk/2923227
+	var b = [], i, unicode;
+	for (i = 0; i < str.length; i++) {
+		unicode = str.charCodeAt(i);
+		// 0x00000000 - 0x0000007f -> 0xxxxxxx
+		if (unicode <= 0x7f) {
+			b.push(unicode);
+			// 0x00000080 - 0x000007ff -> 110xxxxx 10xxxxxx
+		} else if (unicode <= 0x7ff) {
+			b.push((unicode >> 6) | 0xc0);
+			b.push((unicode & 0x3F) | 0x80);
+			// 0x00000800 - 0x0000ffff -> 1110xxxx 10xxxxxx 10xxxxxx
+		} else if (unicode <= 0xffff) {
+			b.push((unicode >> 12) | 0xe0);
+			b.push(((unicode >> 6) & 0x3f) | 0x80);
+			b.push((unicode & 0x3f) | 0x80);
+			// 0x00010000 - 0x001fffff -> 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+		} else {
+			b.push((unicode >> 18) | 0xf0);
+			b.push(((unicode >> 12) & 0x3f) | 0x80);
+			b.push(((unicode >> 6) & 0x3f) | 0x80);
+			b.push((unicode & 0x3f) | 0x80);
+		}
+	}
+
+	return b;
 }
 
 var BitStream = function (source, byteOffset, byteLength) {
@@ -303,6 +357,7 @@ BitStream.prototype.writeBits = function (value, bits) {
 	this._index += bits;
 };
 
+BitStream.prototype.readBoolean = reader('getBoolean', 1);
 BitStream.prototype.readInt8 = reader('getInt8', 8);
 BitStream.prototype.readUint8 = reader('getUint8', 8);
 BitStream.prototype.readInt16 = reader('getInt16', 16);
@@ -312,6 +367,7 @@ BitStream.prototype.readUint32 = reader('getUint32', 32);
 BitStream.prototype.readFloat32 = reader('getFloat32', 32);
 BitStream.prototype.readFloat64 = reader('getFloat64', 64);
 
+BitStream.prototype.writeBoolean = writer('setBoolean', 1);
 BitStream.prototype.writeInt8 = writer('setInt8', 8);
 BitStream.prototype.writeUint8 = writer('setUint8', 8);
 BitStream.prototype.writeInt16 = writer('setInt16', 16);
@@ -325,8 +381,16 @@ BitStream.prototype.readASCIIString = function (bytes) {
 	return readASCIIString(this, bytes);
 };
 
+BitStream.prototype.readUTF8String = function (bytes) {
+	return readUTF8String(this, bytes);
+};
+
 BitStream.prototype.writeASCIIString = function (string, bytes) {
 	writeASCIIString(this, string, bytes);
+};
+
+BitStream.prototype.writeUTF8String = function (string, bytes) {
+	writeUTF8String(this, string, bytes);
 };
 
 // AMD / RequireJS
